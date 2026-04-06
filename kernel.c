@@ -185,7 +185,7 @@ void terminal_putchar(char c)
     if(c == '\n') {                         // if \n detected in text
         terminal_column = 0;                // go to start of line (char 0)
         if (++terminal_row == VGA_HEIGHT)   // go below one line
-            terminal_row = 0;               // dont print \n
+            terminal_scrolldown();               // scroll down
         return;
     }
 
@@ -193,7 +193,7 @@ void terminal_putchar(char c)
     if (++terminal_column == VGA_WIDTH) {
         terminal_column = 0;
         if (++terminal_row == VGA_HEIGHT)
-            terminal_row = 0;
+            terminal_scrolldown();
     }
 }
 
@@ -208,14 +208,86 @@ void terminal_writestring(const char* data)
     terminal_write(data, strlen(data));
 }
 
+void terminal_scrolldown() {
+    for (size_t y = 0; y < VGA_HEIGHT - 1; y++) {
+        for (size_t x = 0; x < VGA_WIDTH; x++) {
+            terminal_buffer[y * VGA_WIDTH + x] = terminal_buffer[(y + 1) * VGA_WIDTH +x];
+        }
+    }
+    for(size_t x = 0; x < VGA_WIDTH; x++) {
+        terminal_buffer[(VGA_HEIGHT - 1) * VGA_WIDTH + x] = vga_entry(' ', terminal_color);
+    }
+    terminal_row = VGA_HEIGHT - 1;
+}
+
 void keyboard_handler() {
     uint8_t scancode = inb(0x60);
     if (scancode & 0x80) {
         outb(0x20, 0x20);  // still need to send EOI on key release
         return;
     }
-    char c = '?';
+    char c = '>';
+
+    //literally all the letters by scan code according to set 1 in alphabetical order(PS2 only)
     if (scancode == 0x1E) c = 'a';
+    if (scancode == 0x30) c = 'b';
+    if (scancode == 0x2E) c = 'c';
+    if (scancode == 0x20) c = 'd';
+    if (scancode == 0x12) c = 'e';
+    if (scancode == 0x21) c = 'f';
+    if (scancode == 0x22) c = 'g';
+    if (scancode == 0x23) c = 'h';
+    if (scancode == 0x17) c = 'i';
+    if (scancode == 0x24) c = 'j';
+    if (scancode == 0x25) c = 'k';
+    if (scancode == 0x26) c = 'l';
+    if (scancode == 0x32) c = 'm';
+    if (scancode == 0x31) c = 'n';
+    if (scancode == 0x18) c = 'o';
+    if (scancode == 0x19) c = 'p';
+    if (scancode == 0x10) c = 'q';
+    if (scancode == 0x13) c = 'r';
+    if (scancode == 0x1F) c = 's';
+    if (scancode == 0x14) c = 't';
+    if (scancode == 0x16) c = 'u';
+    if (scancode == 0x2F) c = 'v';
+    if (scancode == 0x11) c = 'w';
+    if (scancode == 0x2D) c = 'x';
+    if (scancode == 0x15) c = 'y';
+    if (scancode == 0x2C) c = 'z';
+
+
+    //numbers
+    if (scancode == 0x0B) c = '0';
+    if (scancode == 0x02) c = '1';
+    if (scancode == 0x03) c = '2';
+    if (scancode == 0x04) c = '3';
+    if (scancode == 0x05) c = '4';
+    if (scancode == 0x06) c = '5';
+    if (scancode == 0x07) c = '6';
+    if (scancode == 0x08) c = '7';
+    if (scancode == 0x09) c = '8';
+    if (scancode == 0x0A) c = '9';
+
+
+
+    //other characters
+    /* space */ if (scancode == 0x39) c = ' '; 
+    /* the slash */ if (scancode == 0x35) c = '/';
+    /* enter */ if (scancode == 0x1C) terminal_writestring("\n");; 
+    /* backspace*/ if(scancode == 0x0E) {
+        if(terminal_column > 0) {
+            terminal_column--;
+        }
+        else if(terminal_row > 0) {
+            terminal_row--;
+            terminal_column = VGA_WIDTH - 1;
+        }
+        terminal_putentryat(' ', terminal_color, terminal_column, terminal_row);
+        outb(0x20, 0x20);
+        return;
+    }
+    
     terminal_putchar(c);
     outb(0x20, 0x20);
 }
