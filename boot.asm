@@ -1,9 +1,5 @@
 [org 0x7C00]
 
-mov ah, 0x0e
-mov al, 'B'
-int 0x10
-
 mov bx, 0x7e00
 
 mov ah, 0x02
