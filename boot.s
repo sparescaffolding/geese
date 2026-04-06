@@ -44,6 +44,31 @@ doesn't make sense to return from this function as the bootloader is gone.
 .section .text
 .global _start
 .type _start, @function
+
+/* gdt stuff */
+.section .data
+gdt_start:
+	.quad 0
+	.word 0xFFFF
+	.word 0x0000
+	.byte 0x00
+	.byte 0x9A
+	.byte 0xCF
+	.byte 0x00
+
+	.word 0xFFFF
+	.word 0x0000
+	.byte 0x00
+	.byte 0x92
+	.byte 0xCF
+	.byte 0x00
+
+gdt_end:
+
+gdtr:
+	.word gdt_end - gdt_start - 1
+	.long gdt_start
+
 _start:
 	/*
 	The bootloader has loaded us into 32-bit protected mode on a x86
@@ -65,16 +90,16 @@ _start:
 	*/
 	mov $stack_top, %esp
 
-	/*
-	This is a good place to initialize crucial processor state before the
-	high-level kernel is entered. It's best to minimize the early
-	environment where crucial features are offline. Note that the
-	processor is not fully initialized yet: Features such as floating
-	point instructions and instruction set extensions are not initialized
-	yet. The GDT should be loaded here. Paging should be enabled here.
-	C++ features such as global constructors and exceptions will require
-	runtime support to work as well.
-	*/
+	lgdt [gdtr]
+	jmp $0x08, $flush
+
+	flush:
+	movw $0x10, %ax
+	movw %ax, %ds
+	movw %ax, %es
+	movw %ax, %fs
+	movw %ax, %gs
+	movw %ax, %ss
 
 	/*
 	Enter the high-level kernel. The ABI requires the stack is 16-byte

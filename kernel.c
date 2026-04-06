@@ -12,6 +12,43 @@
 #error "This tutorial needs to be compiled with a ix86-elf compiler"
 #endif
 
+struct GDT {
+    uint32_t base;
+    uint32_t limit;
+    uint8_t access_byte;
+    uint8_t flags;
+};
+
+
+void kerror(const char* msg)
+{
+    (void)msg;
+    for(;;) __asm__("hlt");  // halt if dies
+}
+
+void encodeGdtEntry(uint8_t *target, struct GDT source)
+{
+    // check if it can be encoded based on limit
+    if (source.limit > 0xFFFFF) {kerror("GDT cannot encode limits larger than 0xFFFFF");}
+    
+    // encode limit
+    target[0] = source.limit & 0xFF;
+    target[1] = (source.limit >> 8) & 0xFF;
+    target[6] = (source.limit >> 16) & 0x0F;
+    
+    // base
+    target[2] = source.base & 0xFF;
+    target[3] = (source.base >> 8) & 0xFF;
+    target[4] = (source.base >> 16) & 0xFF;
+    target[7] = (source.base >> 24) & 0xFF;
+    
+    // access byte
+    target[5] = source.access_byte;
+    
+    // flags
+    target[6] |= (source.flags << 4);
+}
+
 /* Hardware text mode color constants. */
 enum vga_color {
 	VGA_COLOR_BLACK = 0,
@@ -120,5 +157,6 @@ void kernel_main(void)
 	terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
 
 	/* Newline support is left as an exercise. */
-	terminal_writestring("hello!\nthis is a new line..");
+	terminal_writestring("hello!\nthis is a new line..\n");
+	terminal_writestring("its alive!!\n");
 }
