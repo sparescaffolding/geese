@@ -45,30 +45,6 @@ doesn't make sense to return from this function as the bootloader is gone.
 .global _start
 .type _start, @function
 
-/* gdt stuff */
-.section .data
-gdt_start:
-	.quad 0
-	.word 0xFFFF
-	.word 0x0000
-	.byte 0x00
-	.byte 0x9A
-	.byte 0xCF
-	.byte 0x00
-
-	.word 0xFFFF
-	.word 0x0000
-	.byte 0x00
-	.byte 0x92
-	.byte 0xCF
-	.byte 0x00
-
-gdt_end:
-
-gdtr:
-	.word gdt_end - gdt_start - 1
-	.long gdt_start
-
 _start:
 	/*
 	The bootloader has loaded us into 32-bit protected mode on a x86
@@ -90,10 +66,10 @@ _start:
 	*/
 	mov $stack_top, %esp
 
-	lgdt [gdtr]
-	jmp $0x08, $flush
+	lgdt (gdtr)
 
-	flush:
+	jmp $0x08, $flush
+flush:
 	movw $0x10, %ax
 	movw %ax, %ds
 	movw %ax, %es
@@ -132,3 +108,42 @@ Set the size of the _start symbol to the current location '.' minus its start.
 This is useful when debugging or when you implement call tracing.
 */
 .size _start, . - _start
+
+.global keyboard_isr
+keyboard_isr:
+	pusha
+	call keyboard_handler
+	popa
+	iret
+
+.global default_isr
+default_isr:
+    pusha
+    call default_handler
+    popa
+    iret
+
+/* gdt stuff */
+.section .data
+gdt_start:
+	.quad 0
+
+	.word 0xFFFF
+	.word 0x0000
+	.byte 0x00
+	.byte 0x9A
+	.byte 0xCF
+	.byte 0x00
+
+	.word 0xFFFF
+	.word 0x0000
+	.byte 0x00
+	.byte 0x92
+	.byte 0xCF
+	.byte 0x00
+
+gdt_end:
+
+gdtr:
+	.word gdt_end - gdt_start - 1
+	.long gdt_start
