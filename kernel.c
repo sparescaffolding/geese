@@ -86,6 +86,14 @@ void terminal_putentryat(char c, uint8_t color, size_t x, size_t y)
 
 void terminal_putchar(char c) 
 {
+	//new line feature
+	if(c == '\n') {	 						// if \n detected in text
+		terminal_column = 0; 				// go to start of line (char 0)
+		if (++terminal_row == VGA_HEIGHT)	// go below one line
+			terminal_row = 0;				// dont print \n
+		return;
+	}
+
 	terminal_putentryat(c, terminal_color, terminal_column, terminal_row);
 	if (++terminal_column == VGA_WIDTH) {
 		terminal_column = 0;
@@ -109,7 +117,8 @@ void kernel_main(void)
 {
 	/* Initialize terminal interface */
 	terminal_initialize();
+	terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
 
 	/* Newline support is left as an exercise. */
-	terminal_writestring("Hello, kernel World!\n");
+	terminal_writestring("hello!\nthis is a new line..");
 }
