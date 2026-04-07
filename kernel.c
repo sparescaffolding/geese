@@ -118,6 +118,10 @@ size_t terminal_column;
 uint8_t terminal_color;
 uint16_t* terminal_buffer = (uint16_t*)VGA_MEMORY;
 
+#define max_output 1024
+volatile size_t output_index = 0;
+volatile char out_buffer[max_output];
+
 void terminal_initialize(void)
 {
     terminal_row = 0;
@@ -134,6 +138,10 @@ void terminal_initialize(void)
 
 void outb(uint16_t port, uint8_t value) {
     __asm__ volatile ("outb %0, %1" : : "a"(value), "Nd"(port));
+}
+
+void outw(uint16_t port, uint16_t value) {
+    __asm__ volatile ("outw %0, %1" : : "a"(value), "Nd"(port));
 }
 
 void default_handler() {
@@ -179,6 +187,18 @@ void terminal_putentryat(char c, uint8_t color, size_t x, size_t y)
     terminal_buffer[index] = vga_entry(c, color);
 }
 
+void terminal_scrolldown() {
+    for (size_t y = 0; y < VGA_HEIGHT - 1; y++) {
+        for (size_t x = 0; x < VGA_WIDTH; x++) {
+            terminal_buffer[y * VGA_WIDTH + x] = terminal_buffer[(y + 1) * VGA_WIDTH +x];
+        }
+    }
+    for(size_t x = 0; x < VGA_WIDTH; x++) {
+        terminal_buffer[(VGA_HEIGHT - 1) * VGA_WIDTH + x] = vga_entry(' ', terminal_color);
+    }
+    terminal_row = VGA_HEIGHT - 1;
+}
+
 void terminal_putchar(char c)
 {
     //new line feature
@@ -208,16 +228,63 @@ void terminal_writestring(const char* data)
     terminal_write(data, strlen(data));
 }
 
-void terminal_scrolldown() {
-    for (size_t y = 0; y < VGA_HEIGHT - 1; y++) {
-        for (size_t x = 0; x < VGA_WIDTH; x++) {
-            terminal_buffer[y * VGA_WIDTH + x] = terminal_buffer[(y + 1) * VGA_WIDTH +x];
+//compare buffer to list of commands to see if its available
+int strcmp_buf(const char* cmd) {
+    size_t len = strlen(cmd);
+    if (output_index != len) return 0;  // if lengths differ, there wont be a match
+    for (size_t i = 0; i < len; i++) {
+        if (out_buffer[i] != cmd[i]) return 0;  // if any char differs no match
+    }
+    return 1;  // something matches
+}
+
+void print_buffer(void) {
+    // LIST OF COMMANDS //
+    // ---------------------------------
+    // hello - writes "hello world!"
+    // ---------------------------------
+    // clr - clear screen
+    // ---------------------------------
+    // shutdown - shutdown the machine
+    // ---------------------------------
+    // reboot - reset the machine
+    // ---------------------------------
+
+    //simple hello comand
+    if(strcmp_buf("hello")) {
+        terminal_writestring("\nhello world!!\n");
+    }
+
+
+    //clear by basically reinitilizing the terminal
+    else if(strcmp_buf("clr")) {
+        terminal_initialize();
+        terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
+    }
+
+    else if(strcmp_buf("shutdown")) {
+        terminal_writestring("\nshutting down... goodbye!\n");
+        outw(0x604, 0x2000); //QEMU method
+    }
+
+
+    //rebooting (not tested on real hardware but works under QEMU) https://wiki.osdev.org/Reboot
+    else if(strcmp_buf("reboot")) {
+        terminal_writestring("\nrebooting... goodbye!\n");
+        uint8_t g = 0x02;
+        while(g & 0x02)
+            g = inb(0x64);
+        outb(0x64, 0xFE);
+    }
+
+    //handle unknown commands
+    else {
+        terminal_writestring("\nunknown command: ");
+        for (size_t i = 0; i < output_index; i++) {
+            terminal_putchar(out_buffer[i]);
         }
+        terminal_writestring("\n");
     }
-    for(size_t x = 0; x < VGA_WIDTH; x++) {
-        terminal_buffer[(VGA_HEIGHT - 1) * VGA_WIDTH + x] = vga_entry(' ', terminal_color);
-    }
-    terminal_row = VGA_HEIGHT - 1;
 }
 
 void keyboard_handler() {
@@ -227,6 +294,10 @@ void keyboard_handler() {
         return;
     }
     char c = '>';
+
+    //                           //
+    //  ALWAYS SET 1 NO DEMENTIA //
+    //                           //
 
     //literally all the letters by scan code according to set 1 in alphabetical order(PS2 only)
     if (scancode == 0x1E) c = 'a';
@@ -272,9 +343,22 @@ void keyboard_handler() {
 
 
     //other characters
-    /* space */ if (scancode == 0x39) c = ' '; 
-    /* the slash */ if (scancode == 0x35) c = '/';
-    /* enter */ if (scancode == 0x1C) terminal_writestring("\n");; 
+    /*  tab  */
+    if(scancode == 0x0F) terminal_writestring("        ");
+    /* space */
+    if (scancode == 0x39) c = ' '; 
+    /* the slash */
+    if (scancode == 0x35) c = '/';
+    /* enter */
+    if (scancode == 0x1C) {
+    if (output_index > 0) {
+        print_buffer();
+        output_index = 0;
+        terminal_writestring("geese->");
+    }
+    outb(0x20, 0x20);
+    return;
+    }
     /* backspace*/ if(scancode == 0x0E) {
         if(terminal_column > 0) {
             terminal_column--;
@@ -284,11 +368,22 @@ void keyboard_handler() {
             terminal_column = VGA_WIDTH - 1;
         }
         terminal_putentryat(' ', terminal_color, terminal_column, terminal_row);
+
+        //remove last char from buffer too
+        if(output_index > 0) output_index--;
         outb(0x20, 0x20);
         return;
     }
     
-    terminal_putchar(c);
+    if(c != '>') {//ignore if invalid/unconfiged scancode{
+                 //add character to buffer
+        if(output_index < max_output) {
+            out_buffer[output_index++] = c;
+        }
+
+        terminal_putchar(c);
+    }
+
     outb(0x20, 0x20);
 }
 
@@ -300,6 +395,7 @@ void kernel_main(void)
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
     terminal_writestring("hello!\nthis is a new line..\n");
     terminal_writestring("its alive!!\n");
+    terminal_writestring("@>");
     pic_remap();
     extern void default_isr(void);
     for (int i = 0; i < 256; i++)
