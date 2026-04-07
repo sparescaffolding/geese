@@ -66,6 +66,8 @@ _start:
 	*/
 	mov $stack_top, %esp
 
+	push %ebx
+
 	lgdt (gdtr)
 
 	jmp $0x08, $flush

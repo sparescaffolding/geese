@@ -17,6 +17,36 @@ struct IDT {
 } __attribute__((packed));
 struct IDT idt[256];
 
+struct multiboot {
+    uint32_t flags;
+    uint32_t memlow;
+    uint32_t memup;
+    uint32_t boot_dev;
+    uint32_t cmd;
+    uint32_t mods_loaded;
+    uint32_t mods_address;
+};
+
+struct multimod {
+    uint32_t start;
+    uint32_t end;
+    uint32_t cmd;
+    uint32_t reserved;
+};
+
+#define max_files 8
+#define max_name 16
+#define max_size 1024
+
+struct file {
+    char name[max_name];
+    char data[max_size];
+    size_t size;
+    int used; //1 if there is a file
+};
+
+struct file ramdisk[max_files];
+
 /* Check if the compiler thinks you are targeting the wrong operating system. */
 #if defined(__linux__)
 #error "You are not using a cross-compiler, you will most certainly run into trouble"
@@ -109,6 +139,22 @@ size_t strlen(const char* str)
     return len;
 }
 
+//copy string manualy
+void strcpy_s(char* dst, const char* src, size_t max) {
+    size_t i = 0;
+    while (src[i] && i < max - 1) {
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = '\0';
+}
+//copy memory manually
+void memcpy_s(char* dst, const char* src, size_t size) {
+    for (size_t i = 0; i < size; i++) {
+        dst[i] = src[i];
+    }
+}
+
 #define VGA_WIDTH   80
 #define VGA_HEIGHT  25
 #define VGA_MEMORY  0xB8000
@@ -117,6 +163,65 @@ size_t terminal_row;
 size_t terminal_column;
 uint8_t terminal_color;
 uint16_t* terminal_buffer = (uint16_t*)VGA_MEMORY;
+
+void terminal_putchar(char c)
+{
+    //new line feature
+    if(c == '\n') {                         // if \n detected in text
+        terminal_column = 0;                // go to start of line (char 0)
+        if (++terminal_row == VGA_HEIGHT)   // go below one line
+            terminal_scrolldown();               // scroll down
+        return;
+    }
+
+    terminal_putentryat(c, terminal_color, terminal_column, terminal_row);
+    if (++terminal_column == VGA_WIDTH) {
+        terminal_column = 0;
+        if (++terminal_row == VGA_HEIGHT)
+            terminal_scrolldown();
+    }
+}
+
+void terminal_write(const char* data, size_t size)
+{
+    for (size_t i = 0; i < size; i++)
+        terminal_putchar(data[i]);
+}
+
+void terminal_writestring(const char* data)
+{
+    terminal_write(data, strlen(data));
+}
+
+void initramdisk(struct multiboot* m) {
+//make everything blank (0)
+    for (int i = 0; i < max_files; i++) {
+        ramdisk[i].used = 0;
+    }
+    //if no module do nothing
+    if(m->mods_loaded == 0) { terminal_writestring("no modules loaded"); terminal_writestring("\n"); return; }
+    struct multimod* mod = (struct multimod*)m->mods_address;
+
+    for(uint32_t i = 0; i < m->mods_loaded && i < max_files; i++) {
+
+        size_t size = mod[i].end - mod[i].start;
+
+        //skip files larger than max_size
+        if(size > max_size) {
+            terminal_writestring("FILE SKIPPED: size too big");
+            continue;
+        }
+
+        //copy file name via strcpy_s
+        strcpy_s(ramdisk[i].name, (const char*)mod[i].cmd, max_name);
+        //copy from ram to ramdisk slot
+        memcpy_s(ramdisk[i].data, (const char*)mod[i].start, size);
+
+        ramdisk[i].size = size;
+        ramdisk[i].used = 1;
+
+    }
+}
 
 #define max_output 1024
 volatile size_t output_index = 0;
@@ -199,35 +304,6 @@ void terminal_scrolldown() {
     terminal_row = VGA_HEIGHT - 1;
 }
 
-void terminal_putchar(char c)
-{
-    //new line feature
-    if(c == '\n') {                         // if \n detected in text
-        terminal_column = 0;                // go to start of line (char 0)
-        if (++terminal_row == VGA_HEIGHT)   // go below one line
-            terminal_scrolldown();               // scroll down
-        return;
-    }
-
-    terminal_putentryat(c, terminal_color, terminal_column, terminal_row);
-    if (++terminal_column == VGA_WIDTH) {
-        terminal_column = 0;
-        if (++terminal_row == VGA_HEIGHT)
-            terminal_scrolldown();
-    }
-}
-
-void terminal_write(const char* data, size_t size)
-{
-    for (size_t i = 0; i < size; i++)
-        terminal_putchar(data[i]);
-}
-
-void terminal_writestring(const char* data)
-{
-    terminal_write(data, strlen(data));
-}
-
 //compare buffer to list of commands to see if its available
 int strcmp_buf(const char* cmd) {
     size_t len = strlen(cmd);
@@ -248,6 +324,8 @@ void print_buffer(void) {
     // shutdown - shutdown the machine
     // ---------------------------------
     // reboot - reset the machine
+    // ---------------------------------
+    // echo - print text given after command
     // ---------------------------------
 
     //simple hello comand
@@ -275,6 +353,37 @@ void print_buffer(void) {
         while(g & 0x02)
             g = inb(0x64);
         outb(0x64, 0xFE);
+    }
+
+    //print given text
+    //this is broken and im not bothered to fix it
+    else if(strcmp_buf("echo")) {
+        terminal_writestring("\n");
+        if (output_index > 4 && out_buffer[4] == ' ') {
+            for (size_t i = 5; i < output_index; i++) {
+                terminal_putchar(out_buffer[i]);
+            }
+        }
+        terminal_writestring("\n");
+        out_buffer[0] = '\0';
+        output_index = 0;
+    }
+
+    //list all files that were successfully in ramdisk
+    else if(strcmp_buf("list")) {
+        int found = 0;
+        //repeat until every file in the list is went through
+        for (int i = 0; i < max_files; i++) {
+            if (ramdisk[i].used) {
+                terminal_writestring("\n");
+                terminal_writestring(ramdisk[i].name);
+                terminal_writestring("\n");
+                found = 1;
+            }
+        }
+        if (!found) {
+            terminal_writestring("\nno files\n");
+        }
     }
 
     //handle unknown commands
@@ -354,7 +463,7 @@ void keyboard_handler() {
     if (output_index > 0) {
         print_buffer();
         output_index = 0;
-        terminal_writestring("geese->");
+        terminal_writestring("@>");
     }
     outb(0x20, 0x20);
     return;
@@ -389,8 +498,10 @@ void keyboard_handler() {
 
 extern void keyboard_isr(void);
 
-void kernel_main(void)
+void kernel_main(uint32_t m_addr)
 {
+    struct multiboot* m = (struct multiboot*)m_addr;
+    initramdisk(m);
     terminal_initialize();
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
     terminal_writestring("hello!\nthis is a new line..\n");
