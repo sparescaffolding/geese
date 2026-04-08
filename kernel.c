@@ -304,6 +304,28 @@ void terminal_scrolldown() {
     terminal_row = VGA_HEIGHT - 1;
 }
 
+//make argument works like in echo for exmaple
+
+int getarg_index(const char* cmd) {
+    size_t cmd_len = strlen(cmd);
+    //check if buffer longer than command and the space after it
+    if(output_index <= cmd_len) {
+        return -1;  
+    }
+    //check if command matches
+    for (size_t i = 0; i < cmd_len; i++) {
+        if(out_buffer[i] != cmd[i]) {
+            return -1;
+        }
+    }
+    //space again
+    if(out_buffer[cmd_len] != ' ') {
+        return -1;
+    }
+    //return index of the argument
+    return cmd_len + 1;
+}
+
 //compare buffer to list of commands to see if its available
 int strcmp_buf(const char* cmd) {
     size_t len = strlen(cmd);
@@ -319,15 +341,17 @@ void print_buffer(void) {
     // ---------------------------------
     // hello - writes "hello world!"
     // ---------------------------------
-    // clr - clear screen
+    // clear - clear screen
     // ---------------------------------
     // shutdown - shutdown the machine
     // ---------------------------------
     // reboot - reset the machine
     // ---------------------------------
-    // echo - print text given after command
+    // echo * - print text given after command
     // ---------------------------------
-
+    // read * - read a text file
+    // ---------------------------------
+    
     //simple hello comand
     if(strcmp_buf("hello")) {
         terminal_writestring("\nhello world!!\n");
@@ -335,7 +359,7 @@ void print_buffer(void) {
 
 
     //clear by basically reinitilizing the terminal
-    else if(strcmp_buf("clr")) {
+    else if(strcmp_buf("clear")) {
         terminal_initialize();
         terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
     }
@@ -356,19 +380,20 @@ void print_buffer(void) {
     }
 
     //print given text
-    //this is broken and im not bothered to fix it
-    else if(strcmp_buf("echo")) {
+    //this is NOT broken and i bothered to fix it
+    //because it takes arguments now les go :>
+    else if(getarg_index("echo") != -1) {
+        int arg = getarg_index("echo");
         terminal_writestring("\n");
-        if (output_index > 4 && out_buffer[4] == ' ') {
-            for (size_t i = 5; i < output_index; i++) {
-                terminal_putchar(out_buffer[i]);
-            }
+        for(size_t i = arg; i < output_index; i++) {
+            terminal_putchar(out_buffer[i]);
         }
         terminal_writestring("\n");
-        out_buffer[0] = '\0';
-        output_index = 0;
     }
-
+    //if just echo dont throw unknown tell the user how to use the command
+    else if(strcmp_buf("echo")) {
+        terminal_writestring("\nincorrect usage, echo *space* words\n");
+    }
     //list all files that were successfully in ramdisk
     else if(strcmp_buf("list")) {
         int found = 0;
