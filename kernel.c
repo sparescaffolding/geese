@@ -390,6 +390,54 @@ void print_buffer(void) {
         }
         terminal_writestring("\n");
     }
+
+
+    //read text file
+    else if(getarg_index("read") != -1) {
+        int arg = getarg_index("read");
+        
+        //extract filename from buffer and store
+        char name[max_files];
+        size_t fname_len = 0;
+        for (size_t i = arg; i < output_index && fname_len < max_name - 1; i++) {
+            name[fname_len++] = out_buffer[i]; //copy every character from filename
+        }
+        name[fname_len] = '\0'; //null
+
+        //search ramdisk
+        int found = 0;
+        for (int i = 0; i < name; i++) {
+            if(ramdisk[i].used && strlen(ramdisk[i].name) == fname_len) {
+                //compare name to list of names from ramdisk
+                int match = 1;
+                for (size_t j = 0; j < fname_len; j++) {
+                    if(ramdisk[i].name[j] != name[j]) {
+                        match = 0;
+                        break;
+                    }
+                }
+                if(match) {
+                    //write content if found
+                    terminal_writestring("\n");
+                    for(size_t j = 0; j < ramdisk[i].data[j]; j++) {
+                        terminal_putchar(ramdisk[i].data[j]);
+                    }
+                    terminal_writestring("\n");
+                    found = 1;
+                    break;
+                }
+            }
+        }
+
+        if(!found) {
+                terminal_writestring("\n");
+                terminal_writestring("file not found.");
+                terminal_writestring("\n");
+            
+        }
+    }
+
+
     //if just echo dont throw unknown tell the user how to use the command
     else if(strcmp_buf("echo")) {
         terminal_writestring("\nincorrect usage, echo *space* words\n");
@@ -473,6 +521,9 @@ void keyboard_handler() {
     if (scancode == 0x08) c = '7';
     if (scancode == 0x09) c = '8';
     if (scancode == 0x0A) c = '9';
+
+    //other
+    if (scancode == 0x34) c = '.';
 
 
 
