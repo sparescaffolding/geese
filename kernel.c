@@ -113,6 +113,27 @@ enum vga_color {
     VGA_COLOR_WHITE = 15,
 };
 
+uint32_t page_directory[1024] __attribute__((aligned(4096)));
+uint32_t first_table[1024] __attribute__((aligned(4096)));
+
+//blank page directory
+void blank_pagedir() {
+    int i;
+    for(i = 0; i < 1024; i++) {
+        page_directory[i] = 0x00000002;
+    }
+}
+
+void create_table() {
+    unsigned int i;
+    //4 megabyte
+    for(i = 0; i < 1024; i++) {
+        first_table[i] = (i * 0x1000) | 3;
+    }
+    //put the page into directory
+    page_directory[0] = ((unsigned int)first_table) | 3;
+}
+
 static inline uint8_t vga_entry_color(enum vga_color fg, enum vga_color bg)
 {
     return fg | bg << 4;
@@ -580,12 +601,22 @@ void keyboard_handler() {
 
 extern void keyboard_isr(void);
 
+extern void loadpagedirectory(unsigned int*);
+extern void enablepaging();
+
 void kernel_main(uint32_t m_addr)
 {
     struct multiboot* m = (struct multiboot*)m_addr;
     initramdisk(m);
     disable_textcursor();
     terminal_initialize();
+
+    //paging/memory stuff
+    blank_pagedir();                    //blank everything in the page directory
+    create_table();                     //create table
+    loadpagedirectory(page_directory);  //load new page directory
+    enablepaging();                     //enable paging
+
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
     terminal_writestring("hello!\nthis is a new line..\n");
     terminal_writestring("its alive!!\n");

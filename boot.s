@@ -111,6 +111,30 @@ This is useful when debugging or when you implement call tracing.
 */
 .size _start, . - _start
 
+.text
+.global loadpagedirectory
+loadpagedirectory:
+	push %ebp
+	mov %esp, %ebp
+	mov 8(%esp), %eax
+	mov %eax, %cr3
+	mov %ebp, %esp
+	pop %ebp
+	ret
+
+.text
+.global enablepaging
+enablepaging:
+	push %ebp
+	mov %esp, %ebp
+	mov %cr0, %eax
+	or $0x80000000, %eax
+	mov %eax, %cr0
+	mov %ebp, %esp
+	pop %ebp
+	ret
+
+
 .global keyboard_isr
 keyboard_isr:
 	pusha
