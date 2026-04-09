@@ -304,6 +304,12 @@ void terminal_scrolldown() {
     terminal_row = VGA_HEIGHT - 1;
 }
 
+//disable cursor
+void disable_textcursor() {
+    outb(0x3D4, 0x0A);
+	outb(0x3D5, 0x20);
+}
+
 //make argument works like in echo for exmaple
 
 int getarg_index(const char* cmd) {
@@ -578,6 +584,7 @@ void kernel_main(uint32_t m_addr)
 {
     struct multiboot* m = (struct multiboot*)m_addr;
     initramdisk(m);
+    disable_textcursor();
     terminal_initialize();
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
     terminal_writestring("hello!\nthis is a new line..\n");
