@@ -31,6 +31,15 @@ stack is properly aligned and failure to align the stack will result in
 undefined behavior.
 */
 .section .bss
+.align 4
+
+system_timer_fractions: .skip 4
+system_timer_ms:        .skip 4
+IRQ0_fractions:         .skip 4
+IRQ0_ms:                .skip 4
+IRQ0_frequency:         .skip 4
+PIT_reload_value:       .skip 2
+
 .align 16
 stack_bottom:
 .skip 16384 # 16 KiB
@@ -112,6 +121,121 @@ This is useful when debugging or when you implement call tracing.
 .size _start, . - _start
 
 .text
+.global IRQ0handler
+
+IRQ0handler:
+    pusha
+
+    mov IRQ0_fractions, %eax
+    mov IRQ0_ms, %ebx					/* time between irqs */
+
+    add %eax, system_timer_fractions	/* update system fraction */
+    adc %ebx, system_timer_ms			/* update system tick ms */
+
+    mov $0x20, %al
+    out %al, $0x20
+
+    popa
+    iret
+
+/* input
+   ebx desired pit frequency in hz */
+
+.global initpit
+initpit:
+	pushal
+	mov 36(%esp), %ebx
+
+	/* do checks */
+
+	mov $0x10000, %eax
+	cmp $18, %ebx
+	jbe .gotreloadvalue
+
+	mov $1, %eax
+	cmp $1193181, %ebx
+	jae .gotreloadvalue
+
+	/* reload calculation */
+
+	mov $3579545, %eax
+	mov $0, %edx
+	div %ebx
+	cmp $1789772, %edx
+	jb .l1
+	inc %eax
+.l1:
+	mov $3, %ebx
+	mov $0, %edx
+	div %ebx
+	cmp $1, %edx
+	jb .l2
+	inc %eax
+.l2:
+/* calculate frequency */
+
+.gotreloadvalue:
+	push %eax
+	mov %ax, PIT_reload_value
+	mov %eax, %ebx
+	
+	mov $3579545, %eax
+	mov $0, %edx
+	div %ebx
+	cmp $1789772, %edx
+	jb .l3
+	inc %eax
+.l3:
+	mov $3, %ebx
+	mov $0, %edx
+	div %ebx
+	cmp $1, %edx
+	jb .l4
+	inc %eax
+.l4:
+	mov %eax, IRQ0_frequency
+/* calculate time between irqs */
+	pop %ebx
+	mov $0xDBB3A062, %eax
+	mul %ebx
+	shrd $10, %edx, %eax
+	shr $10, %edx
+
+	mov %edx, IRQ0_ms
+	mov %eax, IRQ0_fractions
+
+/* PIT channel */
+	pushf
+	cli
+
+	mov $0x34, %al
+	out %al, $0x43
+
+	mov PIT_reload_value, %ax
+	out %al, $0x40
+	mov %ah, %al
+	out %al, $0x40
+
+	popf
+
+	popal
+	ret
+
+.global timer_isr
+timer_isr:
+    pusha
+    call timer_irq
+    mov $0x20, %al
+    out %al, $0x20
+    popa
+    iret
+
+.global halt
+halt:
+    hlt
+    ret
+
+.text
 .global loadpagedirectory
 loadpagedirectory:
 	push %ebp
@@ -133,7 +257,6 @@ enablepaging:
 	mov %ebp, %esp
 	pop %ebp
 	ret
-
 
 .global keyboard_isr
 keyboard_isr:

@@ -64,6 +64,10 @@ struct GDT {
     uint8_t flags;
 };
 
+void terminal_putentryat(char c, uint8_t color, size_t x, size_t y);
+void terminal_scrolldown(void);
+extern void halt(void);
+
 void kerror(const char* msg)
 {
     (void)msg;
@@ -158,6 +162,23 @@ size_t strlen(const char* str)
     while (str[len])
         len++;
     return len;
+}
+
+extern void halt(void);
+
+volatile uint32_t countdown;
+
+volatile uint32_t ticks = 0;
+
+void timer_irq() {
+    ticks++;
+}
+
+void sleep(uint32_t ms) {
+    uint32_t start = ticks;
+    while ((ticks - start) < ms) {
+        __asm__ volatile ("sti; hlt");
+    }
 }
 
 //copy string manualy
@@ -381,6 +402,7 @@ void print_buffer(void) {
     
     //simple hello comand
     if(strcmp_buf("hello")) {
+        sleep(2000);
         terminal_writestring("\nhello world!!\n");
     }
 
@@ -601,8 +623,19 @@ void keyboard_handler() {
 
 extern void keyboard_isr(void);
 
-extern void loadpagedirectory(unsigned int*);
+extern void loadpagedirectory(uint32_t*);
 extern void enablepaging();
+
+void print_hex(uint32_t n) {
+    char buf[9];
+    buf[8] = '\0';
+    for (int i = 7; i >= 0; i--) {
+        int nibble = n & 0xF;
+        buf[i] = nibble < 10 ? '0' + nibble : 'a' + (nibble - 10);
+        n >>= 4;
+    }
+    terminal_writestring(buf);
+}
 
 void kernel_main(uint32_t m_addr)
 {
@@ -630,6 +663,10 @@ void kernel_main(uint32_t m_addr)
     idtr.limit = sizeof(idt) - 1;
     idtr.base = (uint32_t)&idt;
     __asm__ volatile ("lidt %0" : : "m"(idtr));
+    extern void timer_isr(void);
+    set_idt_entry(32, (uint32_t)timer_isr);
+    initpit(1000);
+    initpit(1000);
     __asm__ volatile ("sti");
     for(;;) __asm__("hlt");
 }
