@@ -5,6 +5,10 @@
 //font
 #include "font8x8_basic.h"
 
+
+//programs
+#include "badapple.h"
+
 struct IDTR {
     uint16_t limit;
     uint32_t base;
@@ -83,6 +87,7 @@ uint32_t fb_bpp;
 
 void terminal_putentryat(char c, uint8_t color, size_t x, size_t y);
 void terminal_scrolldown(void);
+void initpit(int hz);
 extern void halt(void);
 
 void kerror(const char* msg)
@@ -249,6 +254,34 @@ void draw_char(char c, int x, int y, uint32_t fg, uint32_t bg) {
                 placepixel(x + col, y + row, bg);
         }
     }
+}
+
+void draw_frame(uint8_t* frame, uint8_t scale) {
+                        //vertical 96
+    for (int y = 0; y < 96; y++) {
+        for(int x = 0; x < 128; x++)  { //horizontal 128
+            int i = y * 128 + x;
+
+            uint8_t byte = frame[i / 8];
+            uint8_t bit = (byte >> (7 - (i % 8))) & 1;
+
+            uint32_t color = bit ? 0xFFFFFF : 0x000000;
+
+            int sx = 1;
+            int sy = 1;
+
+            if(scale == 1) {
+                sx = x * 5;
+                sy = y * 5;
+            }
+
+            for (int dy = 0; dy < 5; dy++) {
+                for (int dx = 0; dx < 5; dx++) {
+                    placepixel(sx + dx, sy + dy, color);
+                }
+            }
+    }
+}
 }
 
 void terminal_putchar(char c)
@@ -438,6 +471,15 @@ int strcmp_buf(const char* cmd) {
     return 1;  // something matches
 }
 
+void badapple() {
+    for (int f = 0; f < FRAME_COUNT; f++) {
+        draw_frame(frames[f], 1);
+
+        //30 fps
+        sleep(33);
+    }
+}
+
 void print_buffer(void) {
     // LIST OF COMMANDS //
     // ---------------------------------
@@ -453,6 +495,9 @@ void print_buffer(void) {
     // ---------------------------------
     // read * - read a text file
     // ---------------------------------
+    // badapple - fun
+    // ---------------------------------
+    
     
     //simple hello comand
     if(strcmp_buf("hello")) {
@@ -511,7 +556,7 @@ void print_buffer(void) {
 
         //search ramdisk
         int found = 0;
-        for (int i = 0; i < name; i++) {
+        for (int i = 0; i < max_files; i++) {
             if(ramdisk[i].used && strlen(ramdisk[i].name) == fname_len) {
                 //compare name to list of names from ramdisk
                 int match = 1;
@@ -524,7 +569,7 @@ void print_buffer(void) {
                 if(match) {
                     //write content if found
                     terminal_writestring("\n");
-                    for(size_t j = 0; j < ramdisk[i].data[j]; j++) {
+                    for (size_t j = 0; j < ramdisk[i].size; j++) {
                         terminal_putchar(ramdisk[i].data[j]);
                     }
                     terminal_writestring("\n");
@@ -562,6 +607,11 @@ void print_buffer(void) {
         if (!found) {
             terminal_writestring("\nno files\n");
         }
+    }
+
+    //do a funny
+    else if(strcmp_buf("badapple")) {
+        badapple();
     }
 
     //handle unknown commands
@@ -713,10 +763,10 @@ void kernel_main(uint32_t m_addr)
     disable_textcursor();
     terminal_initialize();
 
-    uint32_t* fb = (uint32_t*)(uint32_t)m->framebuffer_addr;
+    /* uint32_t* fb = (uint32_t*)(uint32_t)m->framebuffer_addr;
     uint32_t pitch = m->framebuffer_pitch;
     uint32_t width = m->framebuffer_width;
-    uint32_t height = m->framebuffer_height;
+    uint32_t height = m->framebuffer_height; */
 
     /*for(uint32_t y = 0; y < 100; y++) {
             for(uint32_t x = 0; x < 100; x++) {
@@ -728,9 +778,9 @@ void kernel_main(uint32_t m_addr)
 
     //paging/memory stuff
     blank_pagedir();                    //blank everything in the page directory
-    create_table((uint32_t)m->framebuffer_addr);                     //create table
-    loadpagedirectory(page_directory);  //load new page directory
-    enablepaging();                     //enable paging
+    //create_table((uint32_t)m->framebuffer_addr);                     //create table
+    //loadpagedirectory(page_directory);  //load new page directory
+    //enablepaging();                     //enable paging
 
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
     terminal_writestring("hello!\nthis is a new line..\n");
