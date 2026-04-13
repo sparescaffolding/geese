@@ -402,7 +402,7 @@ void print_buffer(void) {
     
     //simple hello comand
     if(strcmp_buf("hello")) {
-        sleep(2000);
+        sleep(200);
         terminal_writestring("\nhello world!!\n");
     }
 
@@ -415,6 +415,7 @@ void print_buffer(void) {
 
     else if(strcmp_buf("shutdown")) {
         terminal_writestring("\nshutting down... goodbye!\n");
+        sleep(300);
         outw(0x604, 0x2000); //QEMU method
     }
 
@@ -422,6 +423,7 @@ void print_buffer(void) {
     //rebooting (not tested on real hardware but works under QEMU) https://wiki.osdev.org/Reboot
     else if(strcmp_buf("reboot")) {
         terminal_writestring("\nrebooting... goodbye!\n");
+        sleep(300);
         uint8_t g = 0x02;
         while(g & 0x02)
             g = inb(0x64);
@@ -594,6 +596,11 @@ void keyboard_handler() {
     return;
     }
     /* backspace*/ if(scancode == 0x0E) {
+        if (output_index == 0) {
+            outb(0x20, 0x20);
+            return;
+        }
+
         if(terminal_column > 0) {
             terminal_column--;
         }
