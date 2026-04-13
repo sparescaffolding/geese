@@ -2,6 +2,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+//font
+#include "font8x8_basic.h"
+
 struct IDTR {
     uint16_t limit;
     uint32_t base;
@@ -25,7 +28,14 @@ struct multiboot {
     uint32_t cmd;
     uint32_t mods_loaded;
     uint32_t mods_address;
-};
+    uint8_t pads[60];
+    uint64_t framebuffer_addr;
+    uint32_t framebuffer_pitch;
+    uint32_t framebuffer_width;
+    uint32_t framebuffer_height;
+    uint8_t framebuffer_bpp;
+    uint8_t framebuffer_type;
+} __attribute__((packed));
 
 struct multimod {
     uint32_t start;
@@ -63,6 +73,13 @@ struct GDT {
     uint8_t access_byte;
     uint8_t flags;
 };
+
+//framebuffer
+uint32_t* fb;
+uint32_t fb_pitch;
+uint32_t fb_width;
+uint32_t fb_height;
+uint32_t fb_bpp; 
 
 void terminal_putentryat(char c, uint8_t color, size_t x, size_t y);
 void terminal_scrolldown(void);
@@ -120,6 +137,9 @@ enum vga_color {
 uint32_t page_directory[1024] __attribute__((aligned(4096)));
 uint32_t first_table[1024] __attribute__((aligned(4096)));
 
+//framebuffer table
+uint32_t fb_table[1024] __attribute__((aligned(4096)));
+
 //blank page directory
 void blank_pagedir() {
     int i;
@@ -128,7 +148,7 @@ void blank_pagedir() {
     }
 }
 
-void create_table() {
+void create_table(uint32_t fb_phys) {
     unsigned int i;
     //4 megabyte
     for(i = 0; i < 1024; i++) {
@@ -136,6 +156,13 @@ void create_table() {
     }
     //put the page into directory
     page_directory[0] = ((unsigned int)first_table) | 3;
+
+    //framebuffer | 4MB
+    fb_phys = fb_phys & 0xFFC00000;
+    for(i = 0; i < 1024; i++) {
+        fb_table[i] = (fb_phys + i * 0x1000) | 3;
+    }
+    page_directory[fb_phys >> 22] = ((uint32_t)fb_table) | 3;
 }
 
 static inline uint8_t vga_entry_color(enum vga_color fg, enum vga_color bg)
@@ -204,7 +231,25 @@ void memcpy_s(char* dst, const char* src, size_t size) {
 size_t terminal_row;
 size_t terminal_column;
 uint8_t terminal_color;
-uint16_t* terminal_buffer = (uint16_t*)VGA_MEMORY;
+
+void placepixel(int x, int y, uint32_t color) {
+    uint8_t* where = (uint8_t*)fb + y * fb_pitch + x * fb_bpp;
+    where[0] = color         & 0xFF;  //red
+    where[1] = (color >> 8)  & 0xFF;  //green
+    where[2] = (color >> 16) & 0xFF;  //blue
+}
+
+void draw_char(char c, int x, int y, uint32_t fg, uint32_t bg) {
+    uint8_t* glyph = (uint8_t*)font8x8_basic[(uint8_t)c];
+    for(int row = 0; row < 8; row++) {
+        for(int col = 0; col < 8; col++) {
+            if(glyph[row] & (1 << col))
+                placepixel(x + col, y + row, fg);
+            else
+                placepixel(x + col, y + row, bg);
+        }
+    }
+}
 
 void terminal_putchar(char c)
 {
@@ -273,12 +318,12 @@ void terminal_initialize(void)
 {
     terminal_row = 0;
     terminal_column = 0;
-    terminal_color = vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    terminal_color = 0x0F;
 
-    for (size_t y = 0; y < VGA_HEIGHT; y++) {
-        for (size_t x = 0; x < VGA_WIDTH; x++) {
-            const size_t index = y * VGA_WIDTH + x;
-            terminal_buffer[index] = vga_entry(' ', terminal_color);
+    for (uint32_t y = 0; y < fb_height; y++) {
+        uint8_t* row = (uint8_t*)fb + y * fb_pitch;
+        for(uint32_t x = 0; x < fb_width * fb_bpp; x++) {
+            row[x] = 0;
         }
     }
 }
@@ -330,19 +375,28 @@ void terminal_setcolor(uint8_t color)
 
 void terminal_putentryat(char c, uint8_t color, size_t x, size_t y)
 {
-    const size_t index = y * VGA_WIDTH + x;
-    terminal_buffer[index] = vga_entry(c, color);
+    (void)color;                                    //fixed color
+    draw_char(c, x * 8, y * 8, 0xFF0000, 0x000000);  //red on black
 }
 
 void terminal_scrolldown() {
-    for (size_t y = 0; y < VGA_HEIGHT - 1; y++) {
-        for (size_t x = 0; x < VGA_WIDTH; x++) {
-            terminal_buffer[y * VGA_WIDTH + x] = terminal_buffer[(y + 1) * VGA_WIDTH +x];
+    //repeat for each row of pixels
+    for (uint32_t y = 0; y < VGA_HEIGHT - 1; y++) {
+        uint8_t* dst = (uint8_t*)fb + y * fb_pitch;
+        uint8_t* src = (uint8_t*)fb + (y + 8) * fb_pitch;
+        for(uint32_t x = 0; x < fb_width * fb_bpp; x++) {
+            dst[x] = src[x];
         }
     }
-    for(size_t x = 0; x < VGA_WIDTH; x++) {
-        terminal_buffer[(VGA_HEIGHT - 1) * VGA_WIDTH + x] = vga_entry(' ', terminal_color);
+    // clear last row
+    for(uint32_t y = (VGA_HEIGHT - 1) * 8; y < VGA_HEIGHT * 8; y++) {
+        uint8_t* row = (uint8_t*)fb + y * fb_pitch;
+        for(uint32_t x = 0; x < fb_width * fb_bpp; x++) {
+            row[x] = 0;
+        }
     }
+
+
     terminal_row = VGA_HEIGHT - 1;
 }
 
@@ -647,19 +701,42 @@ void print_hex(uint32_t n) {
 void kernel_main(uint32_t m_addr)
 {
     struct multiboot* m = (struct multiboot*)m_addr;
+
+    //grab framebuffer
+    fb = (uint32_t*)(uint32_t)m->framebuffer_addr;
+    fb_pitch = m->framebuffer_pitch;
+    fb_width = m->framebuffer_width;
+    fb_height = m->framebuffer_height;
+    fb_bpp = m->framebuffer_bpp / 8;
+
     initramdisk(m);
     disable_textcursor();
     terminal_initialize();
 
+    uint32_t* fb = (uint32_t*)(uint32_t)m->framebuffer_addr;
+    uint32_t pitch = m->framebuffer_pitch;
+    uint32_t width = m->framebuffer_width;
+    uint32_t height = m->framebuffer_height;
+
+    /*for(uint32_t y = 0; y < 100; y++) {
+            for(uint32_t x = 0; x < 100; x++) {
+                uint32_t* pixel = (uint32_t*)((uint8_t*)fb + y * pitch + x * 4);
+                *pixel = 0x00FF0000;   red 
+            }
+        
+    */
+
     //paging/memory stuff
     blank_pagedir();                    //blank everything in the page directory
-    create_table();                     //create table
+    create_table((uint32_t)m->framebuffer_addr);                     //create table
     loadpagedirectory(page_directory);  //load new page directory
     enablepaging();                     //enable paging
 
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
     terminal_writestring("hello!\nthis is a new line..\n");
     terminal_writestring("its alive!!\n");
+
+
     terminal_writestring("@>");
     pic_remap();
     extern void default_isr(void);
