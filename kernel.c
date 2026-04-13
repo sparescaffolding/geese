@@ -284,6 +284,14 @@ void draw_frame(uint8_t* frame, uint8_t scale) {
 }
 }
 
+void clear_pixels() {
+    for (uint32_t y = 0; y < fb_height; y++) {
+        for (uint32_t x = 0; x < fb_width; x++) {
+            placepixel(x, y, 0x00000000);
+        }
+    }
+}
+
 void terminal_putchar(char c)
 {
     //new line feature
@@ -471,12 +479,27 @@ int strcmp_buf(const char* cmd) {
     return 1;  // something matches
 }
 
+uint8_t scancode;
+
 void badapple() {
     for (int f = 0; f < FRAME_COUNT; f++) {
         draw_frame(frames[f], 1);
 
         //30 fps
         sleep(33);
+
+        //broken quit functionality
+        /*if(scancode == 0x1E) {
+            //go back
+            clear_pixels();
+
+            terminal_initialize();
+            terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
+            terminal_row = 0;
+            terminal_column = 0;
+
+            terminal_writestring("@>");
+        }*/
     }
 }
 
@@ -612,6 +635,27 @@ void print_buffer(void) {
     //do a funny
     else if(strcmp_buf("badapple")) {
         badapple();
+
+        //go back
+        clear_pixels();
+
+        terminal_initialize();
+        terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
+        terminal_row = 0;
+        terminal_column = 0;
+
+        terminal_writestring("@>");
+    }
+
+    //help - list commands
+    else if(strcmp_buf("help")) {
+        terminal_writestring("\n");
+        terminal_writestring("-hello        Prints 'Hello World!'.   |   -clear        Clears screen.\n");
+        terminal_writestring("\n");
+        terminal_writestring("-shutdown     Power off the machine.   |   -reboot       Reboot the machine.\n");
+        terminal_writestring("\n");
+        terminal_writestring("-echo *       Print desired text.      |   -read *       Read file from ramdisk.\n");
+        terminal_writestring("-list         List files in ramdisk.   |   -badapple     peak animation trust.\n");
     }
 
     //handle unknown commands
@@ -621,11 +665,13 @@ void print_buffer(void) {
             terminal_putchar(out_buffer[i]);
         }
         terminal_writestring("\n");
+        terminal_writestring("protip 101: run help for a list of available commands.");
+        terminal_writestring("\n");
     }
 }
 
 void keyboard_handler() {
-    uint8_t scancode = inb(0x60);
+    scancode = inb(0x60);
     if (scancode & 0x80) {
         outb(0x20, 0x20);  // still need to send EOI on key release
         return;
@@ -689,6 +735,10 @@ void keyboard_handler() {
     if (scancode == 0x39) c = ' '; 
     /* the slash */
     if (scancode == 0x35) c = '/';
+    /* escape */
+    if (scancode == 0x01) {
+        
+    }
     /* enter */
     if (scancode == 0x1C) {
     if (output_index > 0) {
