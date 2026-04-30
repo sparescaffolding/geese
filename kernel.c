@@ -50,7 +50,7 @@ struct multimod {
 
 #define max_files 8
 #define max_name 16
-#define max_size 1024
+#define max_size (1024 * 1024 * 8)
 
 struct file {
     char name[max_name];
@@ -59,7 +59,7 @@ struct file {
     int used; //1 if there is a file
 };
 
-struct file ramdisk[max_files];
+struct file* ramdisk;
 
 /* Check if the compiler thinks you are targeting the wrong operating system. */
 #if defined(__linux__)
@@ -89,6 +89,11 @@ void terminal_putentryat(char c, uint8_t color, size_t x, size_t y);
 void terminal_scrolldown(void);
 void initpit(int hz);
 extern void halt(void);
+
+//bump and heap
+#define heapsize (1024 * 1024)
+static uint8_t heap[heapsize];
+static size_t heaptop = 0;
 
 void kerror(const char* msg)
 {
@@ -202,8 +207,30 @@ volatile uint32_t countdown;
 
 volatile uint32_t ticks = 0;
 
+volatile uint8_t cursor_visibility = 0;
+volatile uint8_t cursor_timer = 0;
+
+volatile uint8_t can_print_char = 0;
+volatile uint8_t esc_pressed = 0;
+volatile uint8_t shift_pressed = 0;
+
+
+volatile uint8_t blinktime = 500;
+
 void timer_irq() {
     ticks++;
+    if(!can_print_char) {
+        return;
+    }
+    cursor_timer++;
+    //blink every 500ms or whatever value the blinktime int above is
+    
+    if(cursor_timer >= blinktime) {
+        cursor_timer = 0;
+        cursor_visibility = !cursor_visibility;
+        draw_textcursor();
+    }
+
 }
 
 void sleep(uint32_t ms) {
@@ -230,7 +257,7 @@ void memcpy_s(char* dst, const char* src, size_t size) {
 }
 
 #define VGA_WIDTH   80
-#define VGA_HEIGHT  25
+#define VGA_HEIGHT  60
 #define VGA_MEMORY  0xB8000
 
 size_t terminal_row;
@@ -293,7 +320,7 @@ void clear_pixels() {
 }
 
 void terminal_putchar(char c)
-{
+{   
     //new line feature
     if(c == '\n') {                         // if \n detected in text
         terminal_column = 0;                // go to start of line (char 0)
@@ -319,6 +346,20 @@ void terminal_write(const char* data, size_t size)
 void terminal_writestring(const char* data)
 {
     terminal_write(data, strlen(data));
+}
+
+void* malloc(size_t size) {
+    //align the size to 8 bytes
+    size = (size + 7) & ~7;
+
+    if (heaptop + size >= heapsize) {
+        terminal_writestring("\nran out of memory~\n");
+        return 0;
+    }
+
+    void* ptr = heap[heaptop];
+    heaptop += size;
+    return ptr;
 }
 
 void initramdisk(struct multiboot* m) {
@@ -368,6 +409,12 @@ void terminal_initialize(void)
         }
     }
 }
+
+#define historysize 16                  //max amount of entries in history
+char history[historysize][max_output];  //history index
+int historycount = 0;                   //how many entries in history
+int historypos = 0;                     //the current point in the history
+int historyview = 0;                   //not browsing command history
 
 void outb(uint16_t port, uint8_t value) {
     __asm__ volatile ("outb %0, %1" : : "a"(value), "Nd"(port));
@@ -423,10 +470,12 @@ void terminal_putentryat(char c, uint8_t color, size_t x, size_t y)
 void terminal_scrolldown() {
     //repeat for each row of pixels
     for (uint32_t y = 0; y < VGA_HEIGHT - 1; y++) {
-        uint8_t* dst = (uint8_t*)fb + y * fb_pitch;
-        uint8_t* src = (uint8_t*)fb + (y + 8) * fb_pitch;
-        for(uint32_t x = 0; x < fb_width * fb_bpp; x++) {
-            dst[x] = src[x];
+        for (uint32_t py = 0; py < 8; py++) {
+            uint8_t* dst = (uint8_t*)fb + (y * 8 + py) * fb_pitch;
+            uint8_t* src = (uint8_t*)fb + ((y + 1) * 8 + py) * fb_pitch;
+            for (uint32_t x = 0; x < fb_width * fb_bpp; x++) {
+                dst[x] = src[x];
+            }
         }
     }
     // clear last row
@@ -481,7 +530,35 @@ int strcmp_buf(const char* cmd) {
 
 uint8_t scancode;
 
+void draw_textcursor() {
+    static int last_x = -1;
+    static int last_y = -1;
+
+    int cursor_x = terminal_column * 8;
+    int cursor_y = terminal_row * 8;
+
+    if (cursor_visibility) {
+        draw_char('_', cursor_x, cursor_y, 0xFFFFFF, 0x000000);
+        last_x = cursor_x;
+        last_y = cursor_y;
+    } else {
+        if (last_x != -1) {
+            draw_char(' ', last_x, last_y, 0x000000, 0x000000);
+            last_x = -1;
+            last_y = -1;
+        }
+    }
+}
+
 void badapple() {
+    can_print_char = 0;
+    esc_pressed = 0;
+    terminal_writestring("\nreminder! ESC to quit!\n");
+    sleep(2000);
+    //disable cursor
+    cursor_visibility = 0;
+    cursor_timer = 0;
+    draw_textcursor();
     for (int f = 0; f < FRAME_COUNT; f++) {
         draw_frame(frames[f], 1);
 
@@ -489,7 +566,8 @@ void badapple() {
         sleep(33);
 
         //broken quit functionality
-        /*if(scancode == 0x1E) {
+        if(esc_pressed) {
+            esc_pressed = 0;
             //go back
             clear_pixels();
 
@@ -497,9 +575,14 @@ void badapple() {
             terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
             terminal_row = 0;
             terminal_column = 0;
+            can_print_char = 1;
 
-            terminal_writestring("@>");
-        }*/
+            //reenable cursor
+            cursor_visibility = 1;
+            draw_textcursor();
+
+            return;
+        }
     }
 }
 
@@ -635,16 +718,12 @@ void print_buffer(void) {
     //do a funny
     else if(strcmp_buf("badapple")) {
         badapple();
-
-        //go back
         clear_pixels();
 
         terminal_initialize();
         terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
         terminal_row = 0;
         terminal_column = 0;
-
-        terminal_writestring("@>");
     }
 
     //help - list commands
@@ -672,69 +751,86 @@ void print_buffer(void) {
 
 void keyboard_handler() {
     scancode = inb(0x60);
-    if (scancode & 0x80) {
-        outb(0x20, 0x20);  // still need to send EOI on key release
-        return;
-    }
+    outb(0x20, 0x20);
+
+    if(scancode == 0x01) esc_pressed = 1;
     char c = '>';
 
     //                           //
     //  ALWAYS SET 1 NO DEMENTIA //
     //                           //
 
+    //shift stuff:
+    //left press
+    if(scancode == 0x2A) {
+        shift_pressed = 1;
+        return;
+    }
+    //left release
+    if(scancode == 0xAA) {
+        shift_pressed = 0;
+        return;
+    }
+
+    if (scancode & 0x80) {
+        return;
+    }
+
     //literally all the letters by scan code according to set 1 in alphabetical order(PS2 only)
-    if (scancode == 0x1E) c = 'a';
-    if (scancode == 0x30) c = 'b';
-    if (scancode == 0x2E) c = 'c';
-    if (scancode == 0x20) c = 'd';
-    if (scancode == 0x12) c = 'e';
-    if (scancode == 0x21) c = 'f';
-    if (scancode == 0x22) c = 'g';
-    if (scancode == 0x23) c = 'h';
-    if (scancode == 0x17) c = 'i';
-    if (scancode == 0x24) c = 'j';
-    if (scancode == 0x25) c = 'k';
-    if (scancode == 0x26) c = 'l';
-    if (scancode == 0x32) c = 'm';
-    if (scancode == 0x31) c = 'n';
-    if (scancode == 0x18) c = 'o';
-    if (scancode == 0x19) c = 'p';
-    if (scancode == 0x10) c = 'q';
-    if (scancode == 0x13) c = 'r';
-    if (scancode == 0x1F) c = 's';
-    if (scancode == 0x14) c = 't';
-    if (scancode == 0x16) c = 'u';
-    if (scancode == 0x2F) c = 'v';
-    if (scancode == 0x11) c = 'w';
-    if (scancode == 0x2D) c = 'x';
-    if (scancode == 0x15) c = 'y';
-    if (scancode == 0x2C) c = 'z';
+    if (scancode == 0x1E) c = shift_pressed ? 'A' : 'a';
+    if (scancode == 0x30) c = shift_pressed ? 'B' : 'b';
+    if (scancode == 0x2E) c = shift_pressed ? 'C' : 'c';
+    if (scancode == 0x20) c = shift_pressed ? 'D' : 'd';
+    if (scancode == 0x12) c = shift_pressed ? 'E' : 'e';
+    if (scancode == 0x21) c = shift_pressed ? 'F' : 'f';
+    if (scancode == 0x22) c = shift_pressed ? 'G' : 'g';
+    if (scancode == 0x23) c = shift_pressed ? 'H' : 'h';
+    if (scancode == 0x17) c = shift_pressed ? 'I' : 'i';
+    if (scancode == 0x24) c = shift_pressed ? 'J' : 'j';
+    if (scancode == 0x25) c = shift_pressed ? 'K' : 'k';
+    if (scancode == 0x26) c = shift_pressed ? 'L' : 'l';
+    if (scancode == 0x32) c = shift_pressed ? 'M' : 'm';
+    if (scancode == 0x31) c = shift_pressed ? 'N' : 'n';
+    if (scancode == 0x18) c = shift_pressed ? 'O' : 'o';
+    if (scancode == 0x19) c = shift_pressed ? 'P' : 'p';
+    if (scancode == 0x10) c = shift_pressed ? 'Q' : 'q';
+    if (scancode == 0x13) c = shift_pressed ? 'R' : 'r';
+    if (scancode == 0x1F) c = shift_pressed ? 'S' : 's';
+    if (scancode == 0x14) c = shift_pressed ? 'T' : 't';
+    if (scancode == 0x16) c = shift_pressed ? 'U' : 'u';
+    if (scancode == 0x2F) c = shift_pressed ? 'V' : 'v';
+    if (scancode == 0x11) c = shift_pressed ? 'W' : 'w';
+    if (scancode == 0x2D) c = shift_pressed ? 'X' : 'x';
+    if (scancode == 0x15) c = shift_pressed ? 'Y' : 'y';
+    if (scancode == 0x2C) c = shift_pressed ? 'Z' : 'z';
 
 
     //numbers
-    if (scancode == 0x0B) c = '0';
-    if (scancode == 0x02) c = '1';
-    if (scancode == 0x03) c = '2';
-    if (scancode == 0x04) c = '3';
-    if (scancode == 0x05) c = '4';
-    if (scancode == 0x06) c = '5';
-    if (scancode == 0x07) c = '6';
-    if (scancode == 0x08) c = '7';
-    if (scancode == 0x09) c = '8';
-    if (scancode == 0x0A) c = '9';
+    if (scancode == 0x0B) c = shift_pressed ? ')' : '0';
+    if (scancode == 0x02) c = shift_pressed ? '!' : '1';
+    if (scancode == 0x03) c = shift_pressed ? '@' : '2';
+    if (scancode == 0x04) c = shift_pressed ? '#' : '3';
+    if (scancode == 0x05) c = shift_pressed ? '$' : '4';
+    if (scancode == 0x06) c = shift_pressed ? '%' : '5';
+    if (scancode == 0x07) c = shift_pressed ? '^' : '6';
+    if (scancode == 0x08) c = shift_pressed ? '&' : '7';
+    if (scancode == 0x09) c = shift_pressed ? '*' : '8';
+    if (scancode == 0x0A) c = shift_pressed ? '(' : '9';
 
     //other
-    if (scancode == 0x34) c = '.';
-
+    if (scancode == 0x34) c = shift_pressed ? '>' : '.';
 
 
     //other characters
     /*  tab  */
-    if(scancode == 0x0F) terminal_writestring("        ");
+    if(scancode == 0x0F) {
+        //accidentally broke this by making it do nothing,oops
+        terminal_writestring("");
+    }
     /* space */
     if (scancode == 0x39) c = ' '; 
     /* the slash */
-    if (scancode == 0x35) c = '/';
+    if (scancode == 0x35) c = shift_pressed ? '?' : '/';
     /* escape */
     if (scancode == 0x01) {
         
@@ -742,9 +838,23 @@ void keyboard_handler() {
     /* enter */
     if (scancode == 0x1C) {
     if (output_index > 0) {
+        //add into history
+        int x = historycount % historysize;
+        for (size_t i = 0; i < output_index; i++) {
+            history[x][i] = out_buffer[i];
+        }
+        history[x][output_index] = '\0';
+        historycount++;
+        //--------------------
+        //make sure the cursor is not there when pressing enter
+        cursor_visibility = 0;
+        cursor_timer = 0;
+        draw_textcursor();
         print_buffer();
         output_index = 0;
         terminal_writestring("@>");
+        cursor_visibility = 1;
+        draw_textcursor();
     }
     outb(0x20, 0x20);
     return;
@@ -769,17 +879,85 @@ void keyboard_handler() {
         outb(0x20, 0x20);
         return;
     }
-    
-    if(c != '>') {//ignore if invalid/unconfiged scancode{
-                 //add character to buffer
-        if(output_index < max_output) {
-            out_buffer[output_index++] = c;
+    //arrow key for history
+    //up arrow
+    if(scancode == 0x48) {
+        if(historycount == 0) {
+            return;
         }
 
-        terminal_putchar(c);
-    }
+        if(historyview >= historycount - 1) {
+            historyview = historycount - 1;
+        } else {
+            historyview++;
+        }
+        int x = historyview;
+        //add command to buffer
+        output_index = 0;
+        for (int i = 0; i < max_output; i++) {
+            out_buffer[i] = 0;
+        }
+        for(int i = 0; history[x][i] && i < max_output - 1; i++) {
+            out_buffer[output_index++] = history[x][i];
+        }
+        out_buffer[output_index] = '\0';
+        
+        //redraw
+        terminal_writestring("\r");
+        for (int i = 0; i < VGA_WIDTH; i++) terminal_putchar(' ');
+        terminal_writestring("\r");
 
-    outb(0x20, 0x20);
+        for(size_t i = 0; i < output_index; i++) {
+            terminal_putchar(out_buffer[i]);
+        }
+        return;
+    }
+    //down arrow
+    if(scancode == 0x50) {
+        if(historycount == 0) {
+            return;
+        }
+
+        if(historyview <= 0) {
+            historyview = 0;
+        } else {
+            historyview--;
+        }
+        
+        int x = historyview;
+        output_index = 0;
+
+        //wipe buffer
+        for (int i = 0; i < max_output; i++) {
+            out_buffer[i] = 0;
+        }
+        //load history
+        for(int i = 0; history[x][i] && i < max_output - 1; i++) {
+            out_buffer[output_index++] = history[x][i];
+        }
+        out_buffer[output_index] = '\0';
+        //redraw
+        terminal_writestring("\r");
+        for (int i = 0; i < VGA_WIDTH; i++) {
+            terminal_putchar(' ');
+        }
+        terminal_writestring("\r");
+        for(size_t i = 0; i < output_index; i++) {
+            terminal_putchar(out_buffer[i]);
+        }
+        return;
+    }
+    
+    if(c != '>') {//ignore if invalid/unconfiged scancode{
+        if(can_print_char) {
+                //add character to buffer
+            if(output_index < max_output) {
+                out_buffer[output_index++] = c;
+            }
+            terminal_putchar(c);
+            draw_textcursor();
+        }
+    }
 }
 
 extern void keyboard_isr(void);
@@ -808,6 +986,8 @@ void kernel_main(uint32_t m_addr)
     fb_width = m->framebuffer_width;
     fb_height = m->framebuffer_height;
     fb_bpp = m->framebuffer_bpp / 8;
+
+    ramdisk = malloc(sizeof(struct file) * max_files);
 
     initramdisk(m);
     disable_textcursor();
@@ -838,6 +1018,9 @@ void kernel_main(uint32_t m_addr)
 
 
     terminal_writestring("@>");
+    cursor_visibility = 1;
+    draw_textcursor();
+    can_print_char = 1;
     pic_remap();
     extern void default_isr(void);
     for (int i = 0; i < 256; i++)
