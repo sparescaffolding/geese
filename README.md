@@ -1,5 +1,5 @@
 ### geese
-simple x86 OS made by me written in C with a linear framebuffer and basic ramdisk system
+simple x86 OS made by me written in C with a linear framebuffer and basic ramdisk system.
 
 ### features:
 - linear framebuffer running at 640x480 with a bitmap font
